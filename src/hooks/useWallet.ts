@@ -2,12 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
 import { WalletState } from '../types/nexus';
 import { NEXUS_TESTNET } from '../config/nexus';
-
-declare global {
-  interface Window {
-    ethereum?: any;
-  }
-}
+import { detectWalletProvider, waitForWalletProvider, WalletProvider } from '../utils/walletDetection';
 
 export const useWallet = () => {
   const [walletState, setWalletState] = useState<WalletState>({
@@ -19,42 +14,33 @@ export const useWallet = () => {
   
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [walletProvider, setWalletProvider] = useState<WalletProvider | null>(null);
 
-  // Get the preferred ethereum provider
-  const getEthereumProvider = useCallback(() => {
-    if (typeof window === 'undefined') return null;
-    
-    // Check for MetaMask specifically
-    if (window.ethereum?.isMetaMask) {
-      return window.ethereum;
+  const initializeWalletProvider = useCallback(async () => {
+    try {
+      const provider = await waitForWalletProvider();
+      if (provider) {
+        setWalletProvider(provider);
+        return provider;
+      }
+    } catch (err) {
+      console.error('Error initializing wallet provider:', err);
     }
-    
-    // Check for multiple providers
-    if (window.ethereum?.providers?.length) {
-      // Find MetaMask in the providers array
-      const metaMaskProvider = window.ethereum.providers.find((provider: any) => provider.isMetaMask);
-      if (metaMaskProvider) return metaMaskProvider;
-      
-      // Fallback to first provider
-      return window.ethereum.providers[0];
-    }
-    
-    // Fallback to window.ethereum
-    return window.ethereum;
+    return null;
   }, []);
 
   const checkIfWalletIsConnected = useCallback(async () => {
     try {
-      const ethereum = getEthereumProvider();
-      if (!ethereum) return;
+      const provider = walletProvider || await initializeWalletProvider();
+      if (!provider) return;
 
-      const provider = new ethers.BrowserProvider(ethereum);
-      const accounts = await provider.listAccounts();
+      const ethProvider = new ethers.BrowserProvider(provider);
+      const accounts = await ethProvider.listAccounts();
       
       if (accounts.length > 0) {
-        const signer = await provider.getSigner();
+        const signer = await ethProvider.getSigner();
         const address = await signer.getAddress();
-        const balance = await provider.getBalance(address);
+        const balance = await ethProvider.getBalance(address);
         
         setWalletState({
           isConnected: true,
@@ -66,31 +52,36 @@ export const useWallet = () => {
     } catch (err) {
       console.error('Error checking wallet connection:', err);
     }
-  }, [getEthereumProvider]);
+  }, [walletProvider, initializeWalletProvider]);
 
   const connectWallet = useCallback(async () => {
-    const ethereum = getEthereumProvider();
-    
-    if (!ethereum) {
-      setError('No Ethereum wallet found. Please install MetaMask or another compatible wallet.');
-      return;
-    }
-
     setIsConnecting(true);
     setError(null);
 
     try {
+      const provider = walletProvider || await initializeWalletProvider();
+      
+      if (!provider) {
+        throw new Error('No Ethereum wallet found. Please install MetaMask or another compatible wallet.');
+      }
+
       // Request account access
-      await ethereum.request({ method: 'eth_requestAccounts' });
+      const accounts = await provider.request({ 
+        method: 'eth_requestAccounts' 
+      });
+
+      if (!accounts || accounts.length === 0) {
+        throw new Error('No accounts found. Please unlock your wallet.');
+      }
       
       // Switch to Nexus testnet
-      await switchToNexusNetwork();
+      await switchToNexusNetwork(provider);
       
       // Get account info
-      const provider = new ethers.BrowserProvider(ethereum);
-      const signer = await provider.getSigner();
+      const ethProvider = new ethers.BrowserProvider(provider);
+      const signer = await ethProvider.getSigner();
       const address = await signer.getAddress();
-      const balance = await provider.getBalance(address);
+      const balance = await ethProvider.getBalance(address);
       
       setWalletState({
         isConnected: true,
@@ -98,32 +89,48 @@ export const useWallet = () => {
         balance: ethers.formatEther(balance),
         network: NEXUS_TESTNET
       });
+
+      setWalletProvider(provider);
+      
     } catch (err: any) {
       console.error('Wallet connection error:', err);
-      setError(err.message || 'Failed to connect wallet');
+      
+      let errorMessage = 'Failed to connect wallet';
+      
+      if (err.code === 4001) {
+        errorMessage = 'Connection request was rejected by user';
+      } else if (err.code === -32002) {
+        errorMessage = 'Connection request is already pending. Please check your wallet.';
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+      
+      setError(errorMessage);
     } finally {
       setIsConnecting(false);
     }
-  }, [getEthereumProvider]);
+  }, [walletProvider, initializeWalletProvider]);
 
-  const switchToNexusNetwork = useCallback(async () => {
-    const ethereum = getEthereumProvider();
-    if (!ethereum) throw new Error('No Ethereum provider found');
+  const switchToNexusNetwork = useCallback(async (provider?: WalletProvider) => {
+    const walletProvider = provider || walletProvider;
+    if (!walletProvider) throw new Error('No wallet provider available');
+
+    const chainIdHex = `0x${parseInt(NEXUS_TESTNET.chainId).toString(16)}`;
 
     try {
-      await ethereum.request({
+      await walletProvider.request({
         method: 'wallet_switchEthereumChain',
-        params: [{ chainId: `0x${parseInt(NEXUS_TESTNET.chainId).toString(16)}` }],
+        params: [{ chainId: chainIdHex }],
       });
     } catch (switchError: any) {
-      // This error code indicates that the chain has not been added to MetaMask
+      // This error code indicates that the chain has not been added to the wallet
       if (switchError.code === 4902) {
         try {
-          await ethereum.request({
+          await walletProvider.request({
             method: 'wallet_addEthereumChain',
             params: [
               {
-                chainId: `0x${parseInt(NEXUS_TESTNET.chainId).toString(16)}`,
+                chainId: chainIdHex,
                 chainName: NEXUS_TESTNET.name,
                 rpcUrls: [NEXUS_TESTNET.rpcUrl],
                 blockExplorerUrls: [NEXUS_TESTNET.explorerUrl],
@@ -142,7 +149,7 @@ export const useWallet = () => {
         throw switchError;
       }
     }
-  }, [getEthereumProvider]);
+  }, [walletProvider]);
 
   const disconnectWallet = useCallback(() => {
     setWalletState({
@@ -152,16 +159,14 @@ export const useWallet = () => {
       network: null
     });
     setError(null);
+    setWalletProvider(null);
   }, []);
 
   const refreshBalance = useCallback(async () => {
-    if (walletState.isConnected && walletState.address) {
+    if (walletState.isConnected && walletState.address && walletProvider) {
       try {
-        const ethereum = getEthereumProvider();
-        if (!ethereum) return;
-
-        const provider = new ethers.BrowserProvider(ethereum);
-        const balance = await provider.getBalance(walletState.address);
+        const ethProvider = new ethers.BrowserProvider(walletProvider);
+        const balance = await ethProvider.getBalance(walletState.address);
         
         setWalletState(prev => ({
           ...prev,
@@ -171,20 +176,33 @@ export const useWallet = () => {
         console.error('Error refreshing balance:', err);
       }
     }
-  }, [walletState.isConnected, walletState.address, getEthereumProvider]);
+  }, [walletState.isConnected, walletState.address, walletProvider]);
 
+  // Initialize wallet provider on mount
   useEffect(() => {
-    // Wait for page to load before checking wallet
-    const timer = setTimeout(() => {
+    const init = async () => {
+      await initializeWalletProvider();
+    };
+    
+    // Wait for page to load
+    if (document.readyState === 'complete') {
+      init();
+    } else {
+      window.addEventListener('load', init);
+      return () => window.removeEventListener('load', init);
+    }
+  }, [initializeWalletProvider]);
+
+  // Check connection when provider is available
+  useEffect(() => {
+    if (walletProvider) {
       checkIfWalletIsConnected();
-    }, 1000);
+    }
+  }, [walletProvider, checkIfWalletIsConnected]);
 
-    return () => clearTimeout(timer);
-  }, [checkIfWalletIsConnected]);
-
+  // Set up event listeners
   useEffect(() => {
-    const ethereum = getEthereumProvider();
-    if (!ethereum) return;
+    if (!walletProvider) return;
 
     const handleAccountsChanged = (accounts: string[]) => {
       if (accounts.length === 0) {
@@ -198,18 +216,24 @@ export const useWallet = () => {
       checkIfWalletIsConnected();
     };
 
+    const handleDisconnect = () => {
+      disconnectWallet();
+    };
+
     // Add event listeners
-    ethereum.on('accountsChanged', handleAccountsChanged);
-    ethereum.on('chainChanged', handleChainChanged);
+    walletProvider.on('accountsChanged', handleAccountsChanged);
+    walletProvider.on('chainChanged', handleChainChanged);
+    walletProvider.on('disconnect', handleDisconnect);
 
     return () => {
       // Remove event listeners
-      if (ethereum.removeListener) {
-        ethereum.removeListener('accountsChanged', handleAccountsChanged);
-        ethereum.removeListener('chainChanged', handleChainChanged);
+      if (walletProvider.removeListener) {
+        walletProvider.removeListener('accountsChanged', handleAccountsChanged);
+        walletProvider.removeListener('chainChanged', handleChainChanged);
+        walletProvider.removeListener('disconnect', handleDisconnect);
       }
     };
-  }, [checkIfWalletIsConnected, disconnectWallet, getEthereumProvider]);
+  }, [walletProvider, checkIfWalletIsConnected, disconnectWallet]);
 
   return {
     walletState,
@@ -218,6 +242,6 @@ export const useWallet = () => {
     connectWallet,
     disconnectWallet,
     refreshBalance,
-    switchToNexusNetwork
+    switchToNexusNetwork: () => switchToNexusNetwork()
   };
 };

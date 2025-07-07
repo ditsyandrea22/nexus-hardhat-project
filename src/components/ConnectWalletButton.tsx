@@ -33,15 +33,31 @@ export const ConnectWalletButton: React.FC<ConnectWalletButtonProps> = ({
       </button>
 
       {error && (
-        <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-xl flex items-center gap-3">
-          <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
-          <p className="text-sm text-red-700">{error}</p>
+        <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm text-red-700 font-medium">Connection Error</p>
+            <p className="text-sm text-red-600 mt-1">{error}</p>
+          </div>
         </div>
       )}
 
-      <div className="mt-4 text-center">
-        <p className="text-sm text-gray-600">
-          Supported wallets: MetaMask, Coinbase Wallet, WalletConnect
+      <div className="mt-6 text-center">
+        <p className="text-sm text-gray-600 mb-3">
+          Supported wallets:
+        </p>
+        <div className="flex justify-center gap-4 text-xs text-gray-500">
+          <span>MetaMask</span>
+          <span>•</span>
+          <span>Coinbase Wallet</span>
+          <span>•</span>
+          <span>WalletConnect</span>
+        </div>
+      </div>
+
+      <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-xl">
+        <p className="text-xs text-blue-700 text-center">
+          <strong>Note:</strong> Make sure you have a compatible wallet installed and unlocked before connecting.
         </p>
       </div>
     </div>

@@ -27,14 +27,12 @@ function App() {
   // Get signer when wallet is connected
   React.useEffect(() => {
     const getSigner = async () => {
-      if (walletState.isConnected && typeof window !== 'undefined') {
+      if (walletState.isConnected && typeof window !== 'undefined' && window.ethereum) {
         try {
           // Get the preferred ethereum provider
           let ethereum = window.ethereum;
           
-          if (ethereum?.isMetaMask) {
-            // Use MetaMask directly
-          } else if (ethereum?.providers?.length) {
+          if (ethereum?.providers?.length) {
             // Find MetaMask in providers array
             const metaMaskProvider = ethereum.providers.find((provider: any) => provider.isMetaMask);
             if (metaMaskProvider) {
@@ -51,6 +49,7 @@ function App() {
           }
         } catch (error) {
           console.error('Error getting signer:', error);
+          setSigner(null);
         }
       } else {
         setSigner(null);

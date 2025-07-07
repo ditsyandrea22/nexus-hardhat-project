@@ -9,6 +9,7 @@ export default defineConfig({
   },
   define: {
     global: 'globalThis',
+    'process.env': {},
   },
   resolve: {
     alias: {
@@ -22,5 +23,9 @@ export default defineConfig({
       os: "os-browserify",
       url: "url",
     },
+  },
+  server: {
+    host: true,
+    port: 5173,
   },
 });

@@ -30,4 +30,13 @@ export interface DeploymentResult {
   transactionHash?: string;
   error?: string;
   gasUsed?: string;
+  blockNumber?: number;
+}
+
+export interface TransactionStatus {
+  hash: string;
+  status: 'pending' | 'confirmed' | 'failed';
+  confirmations: number;
+  gasUsed?: string;
+  blockNumber?: number;
 }
