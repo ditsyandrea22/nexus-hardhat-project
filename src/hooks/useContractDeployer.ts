@@ -9,6 +9,7 @@ export const useContractDeployer = (signer: ethers.JsonRpcSigner | null) => {
 
   const estimateGas = async (bytecode: string, abi: any[], constructorParams: any[]) => {
     if (!signer) throw new Error('No signer available');
+    if (!signer.provider) throw new Error('No provider available');
 
     try {
       setError(null);
@@ -16,13 +17,18 @@ export const useContractDeployer = (signer: ethers.JsonRpcSigner | null) => {
       // Create contract factory with proper ABI and bytecode
       const factory = new ethers.ContractFactory(abi, bytecode, signer);
 
+      // Get the deploy transaction
+      const deployTx = await factory.getDeployTransaction(...constructorParams);
+      
       // Estimate gas for deployment
-      const deployTransaction = factory.getDeployTransaction(...constructorParams);
-      const estimatedGas = await signer.estimateGas(deployTransaction);
+      const estimatedGas = await signer.estimateGas({
+        ...deployTx,
+        from: await signer.getAddress()
+      });
 
       // Get current gas price
       const feeData = await signer.provider.getFeeData();
-      const gasPrice = feeData.gasPrice || await signer.provider.getGasPrice();
+      const gasPrice = feeData.gasPrice || BigInt(ethers.parseUnits('20', 'gwei').toString());
       
       return {
         gasLimit: estimatedGas.toString(),
@@ -53,10 +59,15 @@ export const useContractDeployer = (signer: ethers.JsonRpcSigner | null) => {
       // Create contract factory with proper ABI and bytecode
       const factory = new ethers.ContractFactory(abi, bytecode, signer);
 
-      // Deployment options
-      const deployOptions: ethers.ContractDeployTransaction = {};
-      if (gasLimit) deployOptions.gasLimit = ethers.toBigInt(gasLimit);
-      if (gasPrice) deployOptions.gasPrice = ethers.parseUnits(gasPrice, 'gwei');
+      // Get the base deploy transaction
+      const deployTx = await factory.getDeployTransaction(...constructorParams);
+
+      // Prepare deployment options
+      const deployOptions: ethers.ContractDeployTransaction = {
+        ...deployTx,
+        gasLimit: gasLimit ? BigInt(gasLimit) : undefined,
+        gasPrice: gasPrice ? ethers.parseUnits(gasPrice, 'gwei') : undefined
+      };
 
       // Deploy contract
       const contract = await factory.deploy(...constructorParams, deployOptions);
@@ -82,7 +93,7 @@ export const useContractDeployer = (signer: ethers.JsonRpcSigner | null) => {
         contractAddress,
         transactionHash: receipt.hash,
         gasUsed: receipt.gasUsed.toString(),
-        deploymentCost: ethers.formatEther(receipt.gasUsed * receipt.gasPrice)
+        deploymentCost: ethers.formatEther(receipt.gasUsed * (receipt.gasPrice || BigInt(0)))
       };
 
       setDeploymentResult(result);
