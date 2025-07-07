@@ -1,247 +1,283 @@
 import { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
-import { WalletState } from '../types/nexus';
+import { WalletState } from '../types';
 import { NEXUS_TESTNET } from '../config/nexus';
-import { detectWalletProvider, waitForWalletProvider, WalletProvider } from '../utils/walletDetection';
 
 export const useWallet = () => {
   const [walletState, setWalletState] = useState<WalletState>({
     isConnected: false,
     address: null,
-    balance: null,
-    network: null
+    balance: '0',
+    chainId: null
   });
   
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [walletProvider, setWalletProvider] = useState<WalletProvider | null>(null);
+  const [provider, setProvider] = useState<ethers.BrowserProvider | null>(null);
+  const [signer, setSigner] = useState<ethers.JsonRpcSigner | null>(null);
 
-  const initializeWalletProvider = useCallback(async () => {
+  // Safe ethereum provider detection that avoids conflicts
+  const getEthereumProvider = useCallback(() => {
+    if (typeof window === 'undefined') return null;
+    
     try {
-      const provider = await waitForWalletProvider();
-      if (provider) {
-        setWalletProvider(provider);
-        return provider;
+      // Use a more defensive approach to avoid property conflicts
+      const ethereum = (window as any).ethereum;
+      
+      if (!ethereum) return null;
+      
+      // If multiple providers exist, prefer MetaMask
+      if (ethereum.providers && Array.isArray(ethereum.providers)) {
+        const metaMask = ethereum.providers.find((p: any) => p.isMetaMask);
+        return metaMask || ethereum.providers[0];
       }
-    } catch (err) {
-      console.error('Error initializing wallet provider:', err);
+      
+      // Return the main provider
+      return ethereum;
+    } catch (error) {
+      console.warn('Error accessing ethereum provider:', error);
+      return null;
     }
-    return null;
   }, []);
 
-  const checkIfWalletIsConnected = useCallback(async () => {
-    try {
-      const provider = walletProvider || await initializeWalletProvider();
-      if (!provider) return;
-
-      const ethProvider = new ethers.BrowserProvider(provider);
-      const accounts = await ethProvider.listAccounts();
-      
-      if (accounts.length > 0) {
-        const signer = await ethProvider.getSigner();
-        const address = await signer.getAddress();
-        const balance = await ethProvider.getBalance(address);
-        
-        setWalletState({
-          isConnected: true,
-          address,
-          balance: ethers.formatEther(balance),
-          network: NEXUS_TESTNET
-        });
-      }
-    } catch (err) {
-      console.error('Error checking wallet connection:', err);
+  // Safe provider request wrapper
+  const safeRequest = async (method: string, params?: any[]) => {
+    const ethereum = getEthereumProvider();
+    if (!ethereum || typeof ethereum.request !== 'function') {
+      throw new Error('No valid Web3 provider found');
     }
-  }, [walletProvider, initializeWalletProvider]);
-
-  const connectWallet = useCallback(async () => {
-    setIsConnecting(true);
-    setError(null);
-
+    
     try {
-      const provider = walletProvider || await initializeWalletProvider();
+      return await ethereum.request({ method, params });
+    } catch (error: any) {
+      console.error(`Provider request failed for ${method}:`, error);
+      throw error;
+    }
+  };
+
+  const connectWallet = async () => {
+    try {
+      // Wait for wallet extensions to fully load
+      await new Promise(resolve => setTimeout(resolve, 200));
       
-      if (!provider) {
-        throw new Error('No Ethereum wallet found. Please install MetaMask or another compatible wallet.');
+      const ethereum = getEthereumProvider();
+      if (!ethereum) {
+        throw new Error('No Web3 wallet detected. Please install MetaMask or another Web3 wallet.');
       }
 
       // Request account access
-      const accounts = await provider.request({ 
-        method: 'eth_requestAccounts' 
-      });
+      const accounts = await safeRequest('eth_requestAccounts');
 
       if (!accounts || accounts.length === 0) {
         throw new Error('No accounts found. Please unlock your wallet.');
       }
+
+      const provider = new ethers.BrowserProvider(ethereum);
+      const signer = await provider.getSigner();
+      const network = await provider.getNetwork();
       
-      // Switch to Nexus testnet
-      await switchToNexusNetwork(provider);
-      
-      // Get account info
-      const ethProvider = new ethers.BrowserProvider(provider);
-      const signer = await ethProvider.getSigner();
-      const address = await signer.getAddress();
-      const balance = await ethProvider.getBalance(address);
+      // Check if we're on the correct network
+      if (network.chainId.toString() !== NEXUS_TESTNET.chainId) {
+        try {
+          await switchToNexusTestnet();
+          // Refresh network info after switch
+          const newNetwork = await provider.getNetwork();
+          if (newNetwork.chainId.toString() !== NEXUS_TESTNET.chainId) {
+            console.warn('Network switch may not have completed');
+          }
+        } catch (switchError) {
+          console.warn('Failed to switch network:', switchError);
+        }
+      }
+
+      const balance = await provider.getBalance(accounts[0]);
       
       setWalletState({
         isConnected: true,
-        address,
+        address: accounts[0],
         balance: ethers.formatEther(balance),
-        network: NEXUS_TESTNET
+        chainId: network.chainId.toString()
       });
-
-      setWalletProvider(provider);
       
-    } catch (err: any) {
-      console.error('Wallet connection error:', err);
+      setProvider(provider);
+      setSigner(signer);
       
-      let errorMessage = 'Failed to connect wallet';
+      return { success: true, address: accounts[0] };
+    } catch (error: any) {
+      console.error('Error connecting wallet:', error);
       
-      if (err.code === 4001) {
-        errorMessage = 'Connection request was rejected by user';
-      } else if (err.code === -32002) {
-        errorMessage = 'Connection request is already pending. Please check your wallet.';
-      } else if (err.message) {
-        errorMessage = err.message;
+      // Handle specific error cases
+      if (error.code === 4001) {
+        throw new Error('Connection rejected by user');
+      } else if (error.code === -32002) {
+        throw new Error('Connection request already pending');
+      } else {
+        throw new Error(error.message || 'Failed to connect wallet');
       }
-      
-      setError(errorMessage);
-    } finally {
-      setIsConnecting(false);
     }
-  }, [walletProvider, initializeWalletProvider]);
+  };
 
-  const switchToNexusNetwork = useCallback(async (provider?: WalletProvider) => {
-    const walletProvider = provider || walletProvider;
-    if (!walletProvider) throw new Error('No wallet provider available');
-
-    const chainIdHex = `0x${parseInt(NEXUS_TESTNET.chainId).toString(16)}`;
-
+  const switchToNexusTestnet = async () => {
     try {
-      await walletProvider.request({
-        method: 'wallet_switchEthereumChain',
-        params: [{ chainId: chainIdHex }],
-      });
+      await safeRequest('wallet_switchEthereumChain', [
+        { chainId: `0x${parseInt(NEXUS_TESTNET.chainId).toString(16)}` }
+      ]);
     } catch (switchError: any) {
-      // This error code indicates that the chain has not been added to the wallet
+      // This error code indicates that the chain has not been added to MetaMask
       if (switchError.code === 4902) {
         try {
-          await walletProvider.request({
-            method: 'wallet_addEthereumChain',
-            params: [
-              {
-                chainId: chainIdHex,
-                chainName: NEXUS_TESTNET.name,
-                rpcUrls: [NEXUS_TESTNET.rpcUrl],
-                blockExplorerUrls: [NEXUS_TESTNET.explorerUrl],
-                nativeCurrency: {
-                  name: NEXUS_TESTNET.symbol,
-                  symbol: NEXUS_TESTNET.symbol,
-                  decimals: 18,
-                },
-              },
-            ],
-          });
+          await safeRequest('wallet_addEthereumChain', [{
+            chainId: `0x${parseInt(NEXUS_TESTNET.chainId).toString(16)}`,
+            chainName: NEXUS_TESTNET.name,
+            rpcUrls: [NEXUS_TESTNET.rpcUrl],
+            blockExplorerUrls: [NEXUS_TESTNET.explorerUrl],
+            nativeCurrency: {
+              name: NEXUS_TESTNET.name,
+              symbol: NEXUS_TESTNET.symbol,
+              decimals: 18
+            }
+          }]);
         } catch (addError) {
-          throw new Error('Failed to add Nexus network to wallet');
+          console.error('Failed to add network:', addError);
+          throw new Error('Failed to add Nexus Testnet to wallet');
         }
       } else {
-        throw switchError;
+        console.error('Failed to switch network:', switchError);
+        throw new Error('Failed to switch to Nexus Testnet');
       }
     }
-  }, [walletProvider]);
+  };
 
-  const disconnectWallet = useCallback(() => {
+  const disconnect = useCallback(() => {
     setWalletState({
       isConnected: false,
       address: null,
-      balance: null,
-      network: null
+      balance: '0',
+      chainId: null
     });
-    setError(null);
-    setWalletProvider(null);
+    setProvider(null);
+    setSigner(null);
   }, []);
 
-  const refreshBalance = useCallback(async () => {
-    if (walletState.isConnected && walletState.address && walletProvider) {
+  const updateBalance = useCallback(async () => {
+    if (provider && walletState.address) {
       try {
-        const ethProvider = new ethers.BrowserProvider(walletProvider);
-        const balance = await ethProvider.getBalance(walletState.address);
-        
+        const balance = await provider.getBalance(walletState.address);
         setWalletState(prev => ({
           ...prev,
           balance: ethers.formatEther(balance)
         }));
-      } catch (err) {
-        console.error('Error refreshing balance:', err);
+      } catch (error) {
+        console.error('Failed to update balance:', error);
       }
     }
-  }, [walletState.isConnected, walletState.address, walletProvider]);
+  }, [provider, walletState.address]);
 
-  // Initialize wallet provider on mount
+  // Set up event listeners with better error handling
   useEffect(() => {
-    const init = async () => {
-      await initializeWalletProvider();
-    };
-    
-    // Wait for page to load
-    if (document.readyState === 'complete') {
-      init();
-    } else {
-      window.addEventListener('load', init);
-      return () => window.removeEventListener('load', init);
-    }
-  }, [initializeWalletProvider]);
-
-  // Check connection when provider is available
-  useEffect(() => {
-    if (walletProvider) {
-      checkIfWalletIsConnected();
-    }
-  }, [walletProvider, checkIfWalletIsConnected]);
-
-  // Set up event listeners
-  useEffect(() => {
-    if (!walletProvider) return;
+    const ethereum = getEthereumProvider();
+    if (!ethereum) return;
 
     const handleAccountsChanged = (accounts: string[]) => {
-      if (accounts.length === 0) {
-        disconnectWallet();
-      } else {
-        checkIfWalletIsConnected();
+      try {
+        if (accounts.length === 0) {
+          disconnect();
+        } else if (accounts[0] !== walletState.address) {
+          connectWallet().catch(console.error);
+        }
+      } catch (error) {
+        console.error('Error handling accounts change:', error);
       }
     };
 
-    const handleChainChanged = () => {
-      checkIfWalletIsConnected();
+    const handleChainChanged = (chainId: string) => {
+      try {
+        const decimalChainId = typeof chainId === 'string' && chainId.startsWith('0x') 
+          ? parseInt(chainId, 16).toString() 
+          : chainId;
+        
+        setWalletState(prev => ({
+          ...prev,
+          chainId: decimalChainId
+        }));
+        
+        updateBalance();
+      } catch (error) {
+        console.error('Error handling chain change:', error);
+      }
     };
 
     const handleDisconnect = () => {
-      disconnectWallet();
-    };
-
-    // Add event listeners
-    walletProvider.on('accountsChanged', handleAccountsChanged);
-    walletProvider.on('chainChanged', handleChainChanged);
-    walletProvider.on('disconnect', handleDisconnect);
-
-    return () => {
-      // Remove event listeners
-      if (walletProvider.removeListener) {
-        walletProvider.removeListener('accountsChanged', handleAccountsChanged);
-        walletProvider.removeListener('chainChanged', handleChainChanged);
-        walletProvider.removeListener('disconnect', handleDisconnect);
+      try {
+        disconnect();
+      } catch (error) {
+        console.error('Error handling disconnect:', error);
       }
     };
-  }, [walletProvider, checkIfWalletIsConnected, disconnectWallet]);
+
+    // Add event listeners safely
+    try {
+      if (ethereum.on && typeof ethereum.on === 'function') {
+        ethereum.on('accountsChanged', handleAccountsChanged);
+        ethereum.on('chainChanged', handleChainChanged);
+        ethereum.on('disconnect', handleDisconnect);
+      }
+    } catch (error) {
+      console.warn('Failed to set up wallet event listeners:', error);
+    }
+
+    // Cleanup function
+    return () => {
+      try {
+        if (ethereum.removeListener && typeof ethereum.removeListener === 'function') {
+          ethereum.removeListener('accountsChanged', handleAccountsChanged);
+          ethereum.removeListener('chainChanged', handleChainChanged);
+          ethereum.removeListener('disconnect', handleDisconnect);
+        } else if (ethereum.off && typeof ethereum.off === 'function') {
+          ethereum.off('accountsChanged', handleAccountsChanged);
+          ethereum.off('chainChanged', handleChainChanged);
+          ethereum.off('disconnect', handleDisconnect);
+        }
+      } catch (error) {
+        console.warn('Failed to remove wallet event listeners:', error);
+      }
+    };
+  }, [walletState.address, disconnect, updateBalance]);
+
+  // Auto-connect if previously connected
+  useEffect(() => {
+    const autoConnect = async () => {
+      try {
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for extensions
+        
+        const ethereum = getEthereumProvider();
+        if (!ethereum) return;
+
+        const accounts = await safeRequest('eth_accounts');
+        if (accounts && accounts.length > 0) {
+          await connectWallet();
+        }
+      } catch (error) {
+        console.warn('Auto-connect failed:', error);
+      }
+    };
+
+    autoConnect();
+  }, []);
 
   return {
     walletState,
-    isConnecting,
-    error,
+    provider,
+    signer,
     connectWallet,
-    disconnectWallet,
-    refreshBalance,
-    switchToNexusNetwork: () => switchToNexusNetwork()
+    disconnect,
+    switchToNexusTestnet,
+    updateBalance
   };
 };
+
+// Global type declarations
+declare global {
+  interface Window {
+    ethereum?: any;
+    web3?: any;
+  }
+}

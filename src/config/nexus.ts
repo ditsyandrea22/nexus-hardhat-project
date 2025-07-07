@@ -1,6 +1,6 @@
-import { NexusNetwork } from '../types/nexus';
+import { NetworkConfig } from '../types';
 
-export const NEXUS_TESTNET: NexusNetwork = {
+export const NEXUS_TESTNET: NetworkConfig = {
   chainId: '3940',
   rpcUrl: 'https://testnet3.rpc.nexus.xyz',
   wsUrl: 'wss://testnet3.rpc.nexus.xyz',
@@ -9,4 +9,4 @@ export const NEXUS_TESTNET: NexusNetwork = {
   symbol: 'NXS'
 };
 
-export const SUPPORTED_NETWORKS = [NEXUS_TESTNET];
+export const WALLET_CONNECT_PROJECT_ID = 'your-project-id'; // Replace with actual project ID
