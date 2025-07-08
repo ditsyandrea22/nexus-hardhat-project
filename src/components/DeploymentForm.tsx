@@ -66,21 +66,6 @@ export const DeploymentForm: React.FC<DeploymentFormProps> = ({ onDeploymentSucc
       // Convert total supply to wei (18 decimals)
       const totalSupplyWei = parseEther(formData.totalSupply)
       
-      // Encode constructor parameters
-      const encodedParams = walletClient.encodeFunctionData({
-        abi: [{
-          "inputs": [
-            { "internalType": "string", "name": "_name", "type": "string" },
-            { "internalType": "string", "name": "_symbol", "type": "string" },
-            { "internalType": "uint256", "name": "_totalSupply", "type": "uint256" }
-          ],
-          "stateMutability": "nonpayable",
-          "type": "constructor"
-        }],
-        functionName: 'constructor',
-        args: [formData.name, formData.symbol, totalSupplyWei]
-      })
-      
       // Deploy the contract
       const hash = await walletClient.deployContract({
         abi: ERC20_ABI,
