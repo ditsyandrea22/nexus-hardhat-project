@@ -27,15 +27,14 @@ interface Deployment {
 function App() {
   const [deployments, setDeployments] = useState<Deployment[]>([])
 
-  const handleDeploymentSuccess = (contractAddress: string, txHash: string) => {
-    // In a real app, you'd get these from the form data
+  const handleDeploymentSuccess = (contractAddress: string, txHash: string, name?: string, symbol?: string) => {
     const deployment: Deployment = {
       id: Date.now().toString(),
       contractAddress,
       txHash,
       timestamp: new Date(),
-      name: 'New Token', // You'd pass this from the form
-      symbol: 'NTK' // You'd pass this from the form
+      name: name || 'Token',
+      symbol: symbol || 'TKN'
     }
     setDeployments(prev => [deployment, ...prev])
   }

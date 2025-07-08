@@ -1,13 +1,12 @@
 import React, { useState } from 'react'
 import { motion } from 'framer-motion'
 import { useAccount, useWalletClient } from 'wagmi'
-import { ContractFactory } from 'ethers'
-import { BrowserProvider } from 'ethers'
+import { parseEther } from 'viem'
 import { ERC20_ABI, ERC20_BYTECODE } from '../contracts/ERC20'
 import { Rocket, Loader2, AlertCircle, CheckCircle } from 'lucide-react'
 
 interface DeploymentFormProps {
-  onDeploymentSuccess: (address: string, txHash: string) => void
+  onDeploymentSuccess: (address: string, txHash: string, name?: string, symbol?: string) => void
 }
 
 export const DeploymentForm: React.FC<DeploymentFormProps> = ({ onDeploymentSuccess }) => {
@@ -64,29 +63,42 @@ export const DeploymentForm: React.FC<DeploymentFormProps> = ({ onDeploymentSucc
     setIsSuccess(false)
 
     try {
-      // Create ethers provider from wagmi client
-      const provider = new BrowserProvider(walletClient)
-      const signer = await provider.getSigner()
-
-      // Create contract factory
-      const factory = new ContractFactory(ERC20_ABI, ERC20_BYTECODE, signer)
-
-      // Deploy contract
-      const totalSupplyWei = (parseFloat(formData.totalSupply) * 1e18).toString()
-      const contract = await factory.deploy(formData.name, formData.symbol, totalSupplyWei)
-
-      // Get transaction hash
-      const deploymentTx = contract.deploymentTransaction()
-      if (!deploymentTx) throw new Error('Failed to get deployment transaction')
+      // Convert total supply to wei (18 decimals)
+      const totalSupplyWei = parseEther(formData.totalSupply)
       
-      setTxHash(deploymentTx.hash)
-
-      // Wait for deployment
-      const deployedContract = await contract.waitForDeployment()
-      const contractAddress = await deployedContract.getAddress()
-
+      // Encode constructor parameters
+      const encodedParams = walletClient.encodeFunctionData({
+        abi: [{
+          "inputs": [
+            { "internalType": "string", "name": "_name", "type": "string" },
+            { "internalType": "string", "name": "_symbol", "type": "string" },
+            { "internalType": "uint256", "name": "_totalSupply", "type": "uint256" }
+          ],
+          "stateMutability": "nonpayable",
+          "type": "constructor"
+        }],
+        functionName: 'constructor',
+        args: [formData.name, formData.symbol, totalSupplyWei]
+      })
+      
+      // Deploy the contract
+      const hash = await walletClient.deployContract({
+        abi: ERC20_ABI,
+        bytecode: ERC20_BYTECODE as `0x${string}`,
+        args: [formData.name, formData.symbol, totalSupplyWei],
+      })
+      
+      setTxHash(hash)
+      
+      // Wait for transaction receipt to get contract address
+      const receipt = await walletClient.waitForTransactionReceipt({ hash })
+      
+      if (!receipt.contractAddress) {
+        throw new Error('Contract deployment failed - no contract address returned')
+      }
+      
       // Call success handler
-      onDeploymentSuccess(contractAddress, deploymentTx.hash)
+      onDeploymentSuccess(receipt.contractAddress, hash, formData.name, formData.symbol)
       
       // Show success state
       setIsSuccess(true)
@@ -100,6 +112,8 @@ export const DeploymentForm: React.FC<DeploymentFormProps> = ({ onDeploymentSucc
         errorMessage = 'Transaction rejected by user'
       } else if (err.message.includes('insufficient funds')) {
         errorMessage = 'Insufficient funds for deployment'
+      } else if (err.message.includes('gas')) {
+        errorMessage = 'Gas estimation failed - check your balance'
       } else if (err.message) {
         errorMessage = err.message
       }
@@ -209,7 +223,7 @@ export const DeploymentForm: React.FC<DeploymentFormProps> = ({ onDeploymentSucc
             <motion.button
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
-              onClick={() => window.open(`https://etherscan.io/tx/${txHash}`, '_blank')}
+              onClick={() => window.open(`https://testnet3.explorer.nexus.xyz/tx/${txHash}`, '_blank')}
               className="flex-1 py-4 px-6 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold rounded-xl transition-all duration-200 flex items-center justify-center space-x-2"
             >
               <span>View Transaction</span>
