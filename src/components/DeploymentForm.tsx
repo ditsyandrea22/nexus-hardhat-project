@@ -84,11 +84,13 @@ export const DeploymentForm: React.FC<DeploymentFormProps> = ({ onDeploymentSucc
         throw new Error('Contract deployment failed - no contract address returned')
       }
       
-      // Call success handler
-      onDeploymentSuccess(receipt.contractAddress, hash, formData.name, formData.symbol)
-      
       // Show success state
       setIsSuccess(true)
+      
+      // Call success handler after state update
+      setTimeout(() => {
+        onDeploymentSuccess(receipt.contractAddress!, hash, formData.name, formData.symbol)
+      }, 0)
       
     } catch (err: any) {
       console.error('Deployment error:', err)
