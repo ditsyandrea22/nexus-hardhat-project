@@ -1,7 +1,8 @@
 import React, { useState } from 'react'
 import { motion } from 'framer-motion'
 import { useAccount, useWalletClient, usePublicClient } from 'wagmi'
-import { parseEther, waitForTransactionReceipt } from 'viem'
+import { parseEther } from 'viem'
+import { waitForTransactionReceipt } from 'viem/actions'
 import { ERC20_ABI, ERC20_BYTECODE } from '../contracts/ERC20'
 import { Rocket, Loader2, AlertCircle, CheckCircle } from 'lucide-react'
 
