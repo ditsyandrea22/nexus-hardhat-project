@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { motion } from 'framer-motion'
-import { useAccount, useWalletClient } from 'wagmi'
-import { parseEther } from 'viem'
+import { useAccount, useWalletClient, usePublicClient } from 'wagmi'
+import { parseEther, waitForTransactionReceipt } from 'viem'
 import { ERC20_ABI, ERC20_BYTECODE } from '../contracts/ERC20'
 import { Rocket, Loader2, AlertCircle, CheckCircle } from 'lucide-react'
 
@@ -12,6 +12,7 @@ interface DeploymentFormProps {
 export const DeploymentForm: React.FC<DeploymentFormProps> = ({ onDeploymentSuccess }) => {
   const { isConnected } = useAccount()
   const { data: walletClient } = useWalletClient()
+  const publicClient = usePublicClient()
 
   const [formData, setFormData] = useState({
     name: '',
@@ -47,7 +48,7 @@ export const DeploymentForm: React.FC<DeploymentFormProps> = ({ onDeploymentSucc
   }
 
   const deployContract = async () => {
-    if (!isConnected || !walletClient) {
+    if (!isConnected || !walletClient || !publicClient) {
       setError('Please connect your wallet first')
       return
     }
@@ -76,7 +77,7 @@ export const DeploymentForm: React.FC<DeploymentFormProps> = ({ onDeploymentSucc
       setTxHash(hash)
       
       // Wait for transaction receipt to get contract address
-      const receipt = await walletClient.waitForTransactionReceipt({ hash })
+      const receipt = await waitForTransactionReceipt(publicClient, { hash })
       
       if (!receipt.contractAddress) {
         throw new Error('Contract deployment failed - no contract address returned')
