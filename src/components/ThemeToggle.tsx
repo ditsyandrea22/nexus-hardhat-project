@@ -1,31 +1,25 @@
-import React from 'react';
-import { Sun, Moon } from 'lucide-react';
-import { useTheme } from '../contexts/ThemeContext';
+import React from 'react'
+import { motion } from 'framer-motion'
+import { Sun, Moon } from 'lucide-react'
+import { useTheme } from '../hooks/useTheme'
 
-const ThemeToggle: React.FC = () => {
-  const { isDarkMode, toggleTheme } = useTheme();
+export const ThemeToggle: React.FC = () => {
+  const { isDark, toggleTheme } = useTheme()
 
   return (
-    <button
+    <motion.button
+      whileHover={{ scale: 1.05 }}
+      whileTap={{ scale: 0.95 }}
       onClick={toggleTheme}
-      className="relative p-3 rounded-xl bg-white/10 dark:bg-black/20 backdrop-blur-md border border-white/20 dark:border-white/10 hover:bg-white/20 dark:hover:bg-black/30 transition-all duration-300 transform hover:scale-110 group"
-      aria-label="Toggle theme"
+      className="fixed top-6 right-6 z-50 p-3 bg-white/20 dark:bg-gray-800/50 backdrop-blur-sm rounded-full border border-white/30 dark:border-gray-700/50 text-gray-800 dark:text-white hover:bg-white/30 dark:hover:bg-gray-700/50 transition-all"
     >
-      <div className="relative w-6 h-6">
-        <Sun 
-          className={`absolute inset-0 h-6 w-6 text-yellow-500 transition-all duration-500 transform ${
-            isDarkMode ? 'rotate-90 scale-0 opacity-0' : 'rotate-0 scale-100 opacity-100'
-          }`}
-        />
-        <Moon 
-          className={`absolute inset-0 h-6 w-6 text-blue-400 transition-all duration-500 transform ${
-            isDarkMode ? 'rotate-0 scale-100 opacity-100' : '-rotate-90 scale-0 opacity-0'
-          }`}
-        />
-      </div>
-      <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-yellow-400/20 to-orange-400/20 dark:from-blue-400/20 dark:to-purple-400/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-    </button>
-  );
-};
-
-export default ThemeToggle;
+      <motion.div
+        initial={false}
+        animate={{ rotate: isDark ? 180 : 0 }}
+        transition={{ duration: 0.3 }}
+      >
+        {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+      </motion.div>
+    </motion.button>
+  )
+}
